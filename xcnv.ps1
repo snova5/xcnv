@@ -50,6 +50,10 @@ function Say($m) {
     if (-not $script:Quiet) { Write-Output $m }
 }
 
+function Warn([string]$m) {
+    [Console]::Error.WriteLine("Warning: $m")
+}
+
 # ---- argument parsing -----------------------------------------------------
 if (-not $Rest -or $Rest.Count -lt 1) { Show-Help; exit 2 }
 
@@ -164,16 +168,24 @@ if (($IMG -contains $InExt) -and ($IMG -contains $OutExt) -and -not $InIsGif) {
     if ($OutExt -eq 'ico') {
         $sw = if ($Width)  { $Width }  else { 256 }
         $sh = if ($Height) { $Height } else { 256 }
+        $s = [Math]::Max($sw, $sh)
+        if ($s -gt 256) {
+            $s = 256
+            Warn "ICO supports at most 256x256 - using ${s}x${s} (you asked ${sw}x${sh})"
+        } elseif ($sw -ne $sh) {
+            Warn "ICO icons are square - using ${s}x${s} (you asked ${sw}x${sh})"
+        }
+        $sw = $s; $sh = $s
         & magick "$Input_[0]" -background none -resize "${sw}x${sh}!" -define "icon:auto-resize=$sw" -strip $Output
-        Say "OK: $(Get-Dim $Input_) -> ${sw}x${sh}  ($Input_ -> $Output)"
+        Say "OK: $Input_ ($(Get-Dim $Input_)) -> $Output (${sw}x${sh} ICO)"
         exit 0
     }
     if ($Width) {
         & magick "$Input_[0]" -resize "${Width}x${Height}!" -strip $Output
-        Say "OK: $(Get-Dim $Input_) -> ${Width}x${Height}  ($Input_ -> $Output)"
+        Say "OK: $Input_ ($(Get-Dim $Input_)) -> $Output (${Width}x${Height})"
     } else {
         & magick "$Input_[0]" -strip $Output
-        Say "OK: $(Get-Dim $Input_) -> $OutExt  ($Input_ -> $Output)"
+        Say "OK: $Input_ ($(Get-Dim $Input_)) -> $Output"
     }
     exit 0
 }
@@ -183,7 +195,7 @@ if ($InIsGif -and ($IMG -contains $OutExt) -and $OutExt -ne 'gif') {
     if (-not (Has-Exe magick)) { Fail "ImageMagick not found" }
     if ($Width) { & magick "$Input_[0]" -resize "${Width}x${Height}!" -strip $Output }
     else        { & magick "$Input_[0]" -strip $Output }
-    Say "OK: gif first frame $(Get-Dim $Input_) -> $OutExt  ($Input_ -> $Output)"
+    Say "OK: $Input_ (gif, $(Get-Dim $Input_)) -> $Output (first frame)"
     exit 0
 }
 
@@ -194,7 +206,7 @@ if ($InIsGif -and ($VID -contains $OutExt)) {
     $enc = Get-EncArgs $OutExt
     & ffmpeg -hide_banner -loglevel error -y -i $Input_ @VF @enc $Output
     if ($LASTEXITCODE -ne 0) { Fail "conversion failed ($Input_ -> $Output)" }
-    Say "OK: gif -> $OutExt  ($Input_ -> $Output)"
+    Say "OK: $Input_ (gif) -> $Output"
     exit 0
 }
 
@@ -208,7 +220,7 @@ if ($OutExt -eq 'gif') {
     & ffmpeg -hide_banner -loglevel error -y -i $Input_ -i $pal -filter_complex "fps=12,scale=${sc}:-1:flags=lanczos[x];[x][1:v]paletteuse" $Output
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -ne 0) { Fail "conversion failed ($Input_ -> $Output)" }
-    Say "OK: $(Get-Dim $Input_) -> gif  ($Input_ -> $Output)"
+    Say "OK: $Input_ ($(Get-Dim $Input_)) -> $Output (gif)"
     exit 0
 }
 
@@ -216,7 +228,7 @@ if ($OutExt -eq 'gif') {
 if (@('png','jpg','jpeg','webp','bmp','tiff','tif') -contains $OutExt) {
     & ffmpeg -hide_banner -loglevel error -y -i $Input_ @VF -frames:v 1 $Output
     if ($LASTEXITCODE -ne 0) { Fail "conversion failed ($Input_ -> $Output)" }
-    Say "OK: $(Get-Dim $Input_) -> $OutExt  ($Input_ -> $Output)"
+    Say "OK: $Input_ ($(Get-Dim $Input_)) -> $Output"
     exit 0
 }
 
@@ -224,7 +236,7 @@ if (@('png','jpg','jpeg','webp','bmp','tiff','tif') -contains $OutExt) {
 if ($AUD -contains $OutExt) {
     & ffmpeg -hide_banner -loglevel error -y -i $Input_ -vn $Output
     if ($LASTEXITCODE -ne 0) { Fail "conversion failed ($Input_ -> $Output)" }
-    Say "OK: audio -> $OutExt  ($Input_ -> $Output)"
+    Say "OK: $Input_ -> $Output (audio)"
     exit 0
 }
 
@@ -238,6 +250,6 @@ if ($enc.Count -gt 0) {
 }
 if ($LASTEXITCODE -ne 0) { Fail "conversion failed ($Input_ -> $Output)" }
 
-if ($Width) { Say "OK: $(Get-Dim $Input_) -> ${Width}x${Height}  ($Input_ -> $Output)" }
-else        { Say "OK: $(Get-Dim $Input_) -> $OutExt  ($Input_ -> $Output)" }
+if ($Width) { Say "OK: $Input_ ($(Get-Dim $Input_)) -> $Output (${Width}x${Height})" }
+else        { Say "OK: $Input_ ($(Get-Dim $Input_)) -> $Output" }
 exit 0

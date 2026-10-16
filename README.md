@@ -85,7 +85,9 @@ picked defaults.
 ## Notes
 
 - **ICO**: `xcnv logo.png -c 255x255 logo.ico` writes an ICO with exactly that
-  size. Without `-c` it defaults to 256x256.
+  size (the original PNG is left untouched). Without `-c` it defaults to
+  256x256. ICO is square and capped at 256x256 by the format — larger or
+  non-square requests are clamped and a warning is printed.
 - **GIF out**: a palette is generated first, so the result looks good.
 - **Video codecs**: the tool detects which encoders your ffmpeg actually has
   (libx264 / libopenh264, libvpx-vp9, aac, opus…) and picks the best available

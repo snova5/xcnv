@@ -174,22 +174,31 @@ if is_img_ext "$IN_EXT" && is_img_ext "$OUT_EXT" && [ "$in_is_gif" -eq 0 ]; then
     [ -n "$IM" ] || { err "ImageMagick not found (install 'imagemagick')"; exit 1; }
 
     if [ "$OUT_EXT" = "ico" ]; then
-        # single, exact size: -c 255x255 -> one 255x255 frame; default 256
+        # ICO stores the size in a single byte (1..256, 0 means 256) and is square
         SIZE_W="${WIDTH:-256}"; SIZE_H="${HEIGHT:-256}"
+        S="$SIZE_W"; [ "$SIZE_H" -gt "$S" ] && S="$SIZE_H"
+        if [ "$S" -gt 256 ]; then
+            S=256
+            warn "ICO supports at most 256x256 — using ${S}x${S} (you asked ${SIZE_W}x${SIZE_H})"
+        elif [ "$SIZE_W" != "$SIZE_H" ]; then
+            warn "ICO icons are square — using ${S}x${S} (you asked ${SIZE_W}x${SIZE_H})"
+        fi
+        SIZE_W="$S"; SIZE_H="$S"
         "$IM" "$INPUT[0]" -background none -resize "${SIZE_W}x${SIZE_H}!" \
               -define icon:auto-resize="${SIZE_W}" -strip "$OUTPUT" 2>/dev/null \
         || "$IM" "$INPUT[0]" -background none -resize "${SIZE_W}x${SIZE_H}!" "$OUTPUT"
-        ok_msg "OK: $(pxd "$INPUT") -> ${SIZE_W}x${SIZE_H}  ($INPUT -> $OUTPUT)"
+        [ -f "$OUTPUT" ] || { err "could not write $OUTPUT"; exit 1; }
+        ok_msg "OK: $INPUT ($(pxd "$INPUT")) -> $OUTPUT (${SIZE_W}x${SIZE_H} ICO)"
         exit 0
     fi
 
     if [ -n "$WIDTH" ]; then
         "$IM" "$INPUT[0]" -resize "${WIDTH}x${HEIGHT}!" -strip "$OUTPUT" 2>/dev/null \
         || "$IM" "$INPUT[0]" -resize "${WIDTH}x${HEIGHT}!" "$OUTPUT"
-        ok_msg "OK: $(pxd "$INPUT") -> ${WIDTH}x${HEIGHT}  ($INPUT -> $OUTPUT)"
+        ok_msg "OK: $INPUT ($(pxd "$INPUT")) -> $OUTPUT (${WIDTH}x${HEIGHT})"
     else
         "$IM" "$INPUT[0]" -strip "$OUTPUT" 2>/dev/null || "$IM" "$INPUT[0]" "$OUTPUT"
-        ok_msg "OK: $(pxd "$INPUT") -> $OUT_EXT  ($INPUT -> $OUTPUT)"
+        ok_msg "OK: $INPUT ($(pxd "$INPUT")) -> $OUTPUT"
     fi
     exit 0
 fi
@@ -204,7 +213,7 @@ if [ "$in_is_gif" -eq 1 ] && is_img_ext "$OUT_EXT" && [ "$OUT_EXT" != "gif" ]; t
     else
         "$IM" "$INPUT[0]" -strip "$OUTPUT"
     fi
-    ok_msg "OK: gif first frame $(pxd "$INPUT") -> $OUT_EXT  ($INPUT -> $OUTPUT)"
+    ok_msg "OK: $INPUT (gif, $(pxd "$INPUT")) -> $OUTPUT (first frame)"
     exit 0
 fi
 
@@ -236,7 +245,7 @@ if [ "$in_is_gif" -eq 1 ] && is_vid_ext "$OUT_EXT"; then
     ffmpeg -hide_banner -loglevel error -y -i "$INPUT" ${VF[@]+"${VF[@]}"} \
         ${CA[@]+"${CA[@]}"} "$OUTPUT" \
         || { err "conversion failed ($INPUT -> $OUTPUT)"; exit 1; }
-    ok_msg "OK: gif -> $OUT_EXT  ($INPUT -> $OUTPUT)"
+    ok_msg "OK: $INPUT (gif) -> $OUTPUT"
     exit 0
 fi
 
@@ -266,17 +275,17 @@ case "$OUT_EXT" in
         && ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -i "$P/pal.png" \
                -filter_complex "fps=12,scale=${SC}:-1:flags=lanczos[x];[x][1:v]paletteuse" "$OUTPUT" \
         || { err "conversion failed ($INPUT -> $OUTPUT)"; exit 1; }
-        ok_msg "OK: $(pxd "$INPUT") -> gif  ($INPUT -> $OUTPUT)"
+        ok_msg "OK: $INPUT ($(pxd "$INPUT")) -> $OUTPUT (gif)"
         exit 0 ;;
     png|jpg|jpeg|webp|bmp|tiff|tif)
         # video -> still image
         common_out -frames:v 1 || { err "conversion failed ($INPUT -> $OUTPUT)"; exit 1; }
-        ok_msg "OK: $(pxd "$INPUT") -> $OUT_EXT  ($INPUT -> $OUTPUT)"
+        ok_msg "OK: $INPUT ($(pxd "$INPUT")) -> $OUTPUT"
         exit 0 ;;
     mp3|m4a|aac|opus|ogg|oga|flac|wav|wma|ac3|aiff)
         ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -vn "$OUTPUT" \
             || { err "conversion failed ($INPUT -> $OUTPUT)"; exit 1; }
-        ok_msg "OK: audio -> $OUT_EXT  ($INPUT -> $OUTPUT)"
+        ok_msg "OK: $INPUT -> $OUTPUT (audio)"
         exit 0 ;;
     *)
         # known container: use picked encoders; otherwise try copy then default
@@ -290,8 +299,8 @@ case "$OUT_EXT" in
 esac
 
 if [ -n "$WIDTH" ]; then
-    ok_msg "OK: $(pxd "$INPUT") -> ${WIDTH}x${HEIGHT}  ($INPUT -> $OUTPUT)"
+    ok_msg "OK: $INPUT ($(pxd "$INPUT")) -> $OUTPUT (${WIDTH}x${HEIGHT})"
 else
-    ok_msg "OK: $(pxd "$INPUT") -> ${OUT_EXT:-?}  ($INPUT -> $OUTPUT)"
+    ok_msg "OK: $INPUT ($(pxd "$INPUT")) -> $OUTPUT"
 fi
 exit 0
