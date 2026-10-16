@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# xcnv / xconvert - wrapper pentru ffmpeg + ImageMagick
+# Folosește: xcnv input.ext [-c W x H] output.ext
+
+usage() {
+    echo "Utilizare: xcnv intrare.ext [-c W x H] iesire.ext"
+    echo "Exemple:"
+    echo "  xcnv imagine.png imagine.jpg"
+    echo "  xcnv imagine.png -c 255x255 imagine.ico"
+    echo "  xcnv video.mp4 video.webm"
+    exit 1
+}
+
+if [ $# -lt 2 ]; then usage; fi
+
+INPUT="$1"
+shift
+
+CUSTOM=0
+WIDTH=""
+HEIGHT=""
+
+if [ "$1" = "-c" ]; then
+    CUSTOM=1
+    RES="$2"
+    shift 2
+    if [[ "$RES" =~ ^([0-9]+)x([0-9]+)$ ]]; then
+        WIDTH="${BASH_REMATCH[1]}"
+        HEIGHT="${BASH_REMATCH[2]}"
+    else
+        echo "Eroare: format rezolutie invalid. Folosește 255x255"
+        exit 1
+    fi
+fi
+
+OUTPUT="$1"
+
+if [ ! -f "$INPUT" ]; then
+    echo "Eroare: fișierul '$INPUT' nu există"
+    exit 1
+fi
+
+in_ext="${INPUT##*.}"
+out_ext="${OUTPUT##*.}"
+in_ext="${in_ext,,}"
+out_ext="${out_ext,,}"
+
+image_exts=("png" "jpg" "jpeg" "bmp" "tif" "tiff" "webp" "ico" "gif" "svg" "avif" "heic" "heif")
+video_exts=("mp4" "webm" "mkv" "avi" "mov" "wmv" "flv" "m4v" "ogv" "mpg" "mpeg")
+audio_exts=("mp3" "wav" "ogg" "m4a" "aac" "flac" "opus" "wma")
+
+is_img() { for e in "${image_exts[@]}"; do [[ "$out_ext" == "$e" ]] && return 0; done; return 1; }
+is_vid() { for e in "${video_exts[@]}"; do [[ "$out_ext" == "$e" ]] && return 0; done; return 1; }
+is_aud() { for e in "${audio_exts[@]}"; do [[ "$out_ext" == "$e" ]] && return 0; done; return 1; }
+in_is_img() { for e in "${image_exts[@]}"; do [[ "$in_ext" == "$e" ]] && return 0; done; return 1; }
+in_is_vid() { for e in "${video_exts[@]}"; do [[ "$in_ext" == "$e" ]] && return 0; done; return 1; }
+in_is_aud() { for e in "${audio_exts[@]}"; do [[ "$in_ext" == "$e" ]] && return 0; done; return 1; }
+
+if in_is_img && is_img; then
+    if [ $CUSTOM -eq 1 ]; then
+        magick "$INPUT" -resize "${WIDTH}x${HEIGHT}!" -background transparent -density 96 "$OUTPUT"
+        echo "OK: ${INPUT} -> ${OUTPUT} [resize ${WIDTH}x${HEIGHT}]"
+    else
+        magick "$INPUT" "$OUTPUT"
+        echo "OK: ${INPUT} -> ${OUTPUT} [original]"
+    fi
+    exit 0
+fi
+
+if in_is_img && is_vid; then
+    if [ $CUSTOM -eq 1 ]; then
+        magick "$INPUT" -resize "${WIDTH}x${HEIGHT}" -background black -gravity center -extent "${WIDTH}x${HEIGHT}" /tmp/xcnv_img.png 2>/dev/null || magick "$INPUT" -resize "${WIDTH}x${HEIGHT}!" /tmp/xcnv_img.png
+        ffmpeg -y -loop 1 -i /tmp/xcnv_img.png -c:v libx264 -t 2 -pix_fmt yuv420p -vf "scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2" "$OUTPUT" 2>/dev/null
+    else
+        ffmpeg -y -loop 1 -i "$INPUT" -c:v libx264 -t 2 -pix_fmt yuv420p "$OUTPUT" 2>/dev/null
+    fi
+    echo "OK: imagine -> video ($OUTPUT)"
+    exit 0
+fi
+
+if in_is_vid; then
+    ARGS=()
+    if [ $CUSTOM -eq 1 ]; then
+        ARGS=(-vf "scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2")
+    fi
+    # aleg codec implicit
+    case "$out_ext" in
+        webm) ffmpeg -y -i "$INPUT" "${ARGS[@]}" -c:v libvpx-vp9 -crf 30 -b:v 0 -c:a libopus "$OUTPUT" 2>/dev/null ;;
+        mp4)  ffmpeg -y -i "$INPUT" "${ARGS[@]}" -c:v libx264 -crf 23 -pix_fmt yuv420p -c:a aac "$OUTPUT" 2>/dev/null ;;
+        *)    ffmpeg -y -i "$INPUT" "${ARGS[@]}" -c copy "$OUTPUT" 2>/dev/null || ffmpeg -y -i "$INPUT" "${ARGS[@]}" "$OUTPUT" 2>/dev/null ;;
+    esac
+    echo "OK: video -> $OUTPUT"
+    exit 0
+fi
+
+if in_is_aud; then
+    ffmpeg -y -i "$INPUT" "$OUTPUT" 2>/dev/null
+    echo "OK: audio -> $OUTPUT"
+    exit 0
+fi
+
+# fallback
+ffmpeg -y -i "$INPUT" "$OUTPUT" 2>/dev/null || magick "$INPUT" "$OUTPUT" 2>/dev/null
+echo "OK: $INPUT -> $OUTPUT"
+exit 0
