@@ -1,105 +1,297 @@
 #!/usr/bin/env bash
-# xcnv / xconvert - wrapper pentru ffmpeg + ImageMagick
-# Folosește: xcnv input.ext [-c W x H] output.ext
+#
+# xcnv / xconvert — quick media converter (ffmpeg + ImageMagick wrapper)
+#   xcnv input.ext [-c WxH] output.ext
+#
+# Examples:
+#   xcnv photo.png photo.jpg
+#   xcnv photo.png -c 255x255 photo.ico
+#   xcnv clip.mp4 clip.webm
+#
+set -uo pipefail
+
+VERSION="1.0.0"
+PROG="$(basename "$0")"
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+err()  { printf '\033[31mError:\033[0m %s\n' "$*" >&2; }
+warn() { printf '\033[33mWarning:\033[0m %s\n' "$*" >&2; }
+ok()   { printf '\033[32mOK:\033[0m %s\n' "$*"; }
 
 usage() {
-    echo "Utilizare: xcnv intrare.ext [-c W x H] iesire.ext"
-    echo "Exemple:"
-    echo "  xcnv imagine.png imagine.jpg"
-    echo "  xcnv imagine.png -c 255x255 imagine.ico"
-    echo "  xcnv video.mp4 video.webm"
-    exit 1
+    cat <<EOF
+$PROG $VERSION — quick media converter (ffmpeg + ImageMagick)
+
+Usage:
+  $PROG <input> [-c WxH] <output>
+
+Options:
+  -c W x H      resize to WxH pixels (e.g. -c 255x255)
+                without -c, the original resolution is kept
+  -q, --quiet   no status messages, only errors
+  -h, --help    show this help
+  -V, --version show version
+
+Supported (input -> output):
+  images : png jpg jpeg webp bmp gif tiff tiff ico heic avif svg ...
+  video  : mp4 webm mkv mov avi gif webp ...
+  audio  : mp3 wav ogg flac m4a aac opus wma
+
+Examples:
+  ${PROG} photo.png photo.jpg
+  xcnv photo.png -c 255x255 photo.ico
+  xcnv wallpaper.jpg -c 1280x720 wallpaper.webp
+  xcnv clip.mp4 -c 640x360 clip.webm
+  xcnv song.mp3 song.ogg
+  xcnv anim.gif -c 480x480 anim.mp4
+EOF
 }
 
-if [ $# -lt 2 ]; then usage; fi
+have() { command -v "$1" >/dev/null 2>&1; }
 
-INPUT="$1"
-shift
-
-CUSTOM=0
-WIDTH=""
-HEIGHT=""
-
-if [ "$1" = "-c" ]; then
-    CUSTOM=1
-    RES="$2"
-    shift 2
-    if [[ "$RES" =~ ^([0-9]+)x([0-9]+)$ ]]; then
-        WIDTH="${BASH_REMATCH[1]}"
-        HEIGHT="${BASH_REMATCH[2]}"
-    else
-        echo "Eroare: format rezolutie invalid. Folosește 255x255"
-        exit 1
-    fi
+# pick ImageMagick 7 (magick) or fall back to 6 (convert)
+IM=""
+if have magick; then
+    IM="magick"
+elif have convert; then
+    IM="convert"
 fi
 
-OUTPUT="$1"
-
-if [ ! -f "$INPUT" ]; then
-    echo "Eroare: fișierul '$INPUT' nu există"
-    exit 1
+# ---------------------------------------------------------------------------
+# arguments
+# ---------------------------------------------------------------------------
+if [ $# -lt 1 ]; then
+    usage
+    exit 2
 fi
 
-in_ext="${INPUT##*.}"
-out_ext="${OUTPUT##*.}"
-in_ext="${in_ext,,}"
-out_ext="${out_ext,,}"
-
-image_exts=("png" "jpg" "jpeg" "bmp" "tif" "tiff" "webp" "ico" "gif" "svg" "avif" "heic" "heif")
-video_exts=("mp4" "webm" "mkv" "avi" "mov" "wmv" "flv" "m4v" "ogv" "mpg" "mpeg")
-audio_exts=("mp3" "wav" "ogg" "m4a" "aac" "flac" "opus" "wma")
-
-is_img() { for e in "${image_exts[@]}"; do [[ "$out_ext" == "$e" ]] && return 0; done; return 1; }
-is_vid() { for e in "${video_exts[@]}"; do [[ "$out_ext" == "$e" ]] && return 0; done; return 1; }
-is_aud() { for e in "${audio_exts[@]}"; do [[ "$out_ext" == "$e" ]] && return 0; done; return 1; }
-in_is_img() { for e in "${image_exts[@]}"; do [[ "$in_ext" == "$e" ]] && return 0; done; return 1; }
-in_is_vid() { for e in "${video_exts[@]}"; do [[ "$in_ext" == "$e" ]] && return 0; done; return 1; }
-in_is_aud() { for e in "${audio_exts[@]}"; do [[ "$in_ext" == "$e" ]] && return 0; done; return 1; }
-
-if in_is_img && is_img; then
-    if [ $CUSTOM -eq 1 ]; then
-        magick "$INPUT" -resize "${WIDTH}x${HEIGHT}!" -background transparent -density 96 "$OUTPUT"
-        echo "OK: ${INPUT} -> ${OUTPUT} [resize ${WIDTH}x${HEIGHT}]"
-    else
-        magick "$INPUT" "$OUTPUT"
-        echo "OK: ${INPUT} -> ${OUTPUT} [original]"
-    fi
-    exit 0
-fi
-
-if in_is_img && is_vid; then
-    if [ $CUSTOM -eq 1 ]; then
-        magick "$INPUT" -resize "${WIDTH}x${HEIGHT}" -background black -gravity center -extent "${WIDTH}x${HEIGHT}" /tmp/xcnv_img.png 2>/dev/null || magick "$INPUT" -resize "${WIDTH}x${HEIGHT}!" /tmp/xcnv_img.png
-        ffmpeg -y -loop 1 -i /tmp/xcnv_img.png -c:v libx264 -t 2 -pix_fmt yuv420p -vf "scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2" "$OUTPUT" 2>/dev/null
-    else
-        ffmpeg -y -loop 1 -i "$INPUT" -c:v libx264 -t 2 -pix_fmt yuv420p "$OUTPUT" 2>/dev/null
-    fi
-    echo "OK: imagine -> video ($OUTPUT)"
-    exit 0
-fi
-
-if in_is_vid; then
-    ARGS=()
-    if [ $CUSTOM -eq 1 ]; then
-        ARGS=(-vf "scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2")
-    fi
-    # aleg codec implicit
-    case "$out_ext" in
-        webm) ffmpeg -y -i "$INPUT" "${ARGS[@]}" -c:v libvpx-vp9 -crf 30 -b:v 0 -c:a libopus "$OUTPUT" 2>/dev/null ;;
-        mp4)  ffmpeg -y -i "$INPUT" "${ARGS[@]}" -c:v libx264 -crf 23 -pix_fmt yuv420p -c:a aac "$OUTPUT" 2>/dev/null ;;
-        *)    ffmpeg -y -i "$INPUT" "${ARGS[@]}" -c copy "$OUTPUT" 2>/dev/null || ffmpeg -y -i "$INPUT" "${ARGS[@]}" "$OUTPUT" 2>/dev/null ;;
+# global flags anywhere in the command line
+ARGS=()
+QUIET=0
+for a in "$@"; do
+    case "$a" in
+        -h|--help)    usage; exit 0 ;;
+        -V|--version) echo "$PROG $VERSION"; exit 0 ;;
+        -q|--quiet)   QUIET=1 ;;
+        *)            ARGS+=("$a") ;;
     esac
-    echo "OK: video -> $OUTPUT"
+done
+set -- "${ARGS[@]}"
+
+if [ $# -lt 2 ]; then
+    usage
+    exit 2
+fi
+
+INPUT="$1"; shift
+WIDTH=""; HEIGHT=""
+
+# optional -c WxH (may appear before the output, as in: in.png -c 255x255 out.ico)
+if [ "${1:-}" = "-c" ]; then
+    if [ $# -lt 3 ]; then
+        err "-c needs a size (e.g. -c 255x255) and an output file"
+        exit 2
+    fi
+    RES="$2"; shift 2
+    if [[ "$RES" =~ ^([0-9]+)[xX]([0-9]+)$ ]]; then
+        WIDTH="${BASH_REMATCH[1]}"; HEIGHT="${BASH_REMATCH[2]}"
+    else
+        err "invalid size '$RES' — use WIDTHxHEIGHT, e.g. 255x255"
+        exit 2
+    fi
+fi
+
+OUTPUT="${1:-}"
+if [ -z "$OUTPUT" ]; then
+    err "missing output file"
+    usage
+    exit 2
+fi
+
+[ -e "$INPUT" ] || { err "input file not found: $INPUT"; exit 1; }
+mkdir -p "$(dirname "$OUTPUT")" 2>/dev/null || true
+
+ext_of() { printf '%s' "${1##*.}" | tr '[:upper:]' '[:lower:]'; }
+IN_EXT="$(ext_of "$INPUT")"
+OUT_EXT="$(ext_of "$OUTPUT")"
+
+IMG_EXT=" png jpg jpeg jpe jfif webp gif bmp tiff tif ico heic heif avif ppm pgm pbm tga svg eps pdf "
+VID_EXT=" mp4 mkv webm avi mov wmv flv m4v mpg mpeg ts 3gp ogv "
+AUD_EXT=" mp3 m4a aac wav flac ogg oga opus wma ac3 aiff "
+
+in_list() { [[ "$2" == *" $1 "* ]]; }
+is_img_ext() { in_list "$1" "$IMG_EXT"; }
+is_vid_ext() { in_list "$1" "$VID_EXT"; }
+is_aud_ext() { in_list "$1" "$AUD_EXT"; }
+
+# is this input animated / a video-like image?
+is_animated() {
+    case "$(ext_of "$1")" in
+        gif|webp|apng|avif) return 0 ;;
+        *) [ "$(ext_of "$1")" = "gif" ] && return 0; return 1 ;;
+    esac
+}
+in_is_gif=0
+[ "$(ext_of "$INPUT")" = "gif" ] && in_is_gif=1
+
+ok_msg() { [ "$QUIET" -eq 1 ] || echo "$1"; }
+
+# pixel size of the input (for the final message), best effort
+px() {  # px <file>  -> "WxH" or ""
+    local f="$1"
+    if [ -n "$IM" ]; then
+        local d
+        d=$("$IM" identify -format '%wx%h' "$f[0]" 2>/dev/null | head -1)
+        [ -n "$d" ] && { printf '%s' "$d"; return; }
+    fi
+    if have ffprobe; then
+        local d
+        d=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height \
+             -of csv=p=0:s=x "$f" 2>/dev/null | head -1)
+        [ -n "$d" ] && printf '%s' "$d"
+    fi
+}
+pxd() { local d; d="$(px "$1")"; printf '%s' "${d:--}"; }
+
+# --- detect available encoders once, so we never force a missing one ---
+FF_ENCODERS=""
+have ffmpeg && FF_ENCODERS="$(ffmpeg -hide_banner -encoders 2>/dev/null)"
+has_enc() { [ -n "$FF_ENCODERS" ] && printf '%s' "$FF_ENCODERS" | grep -q " $1 "; }
+pick_enc() { for e in "$@"; do has_enc "$e" && { printf '%s' "$e"; return 0; }; done; return 1; }
+
+H264="$(pick_enc libx264 libopenh264 h264_nvenc h264_qsv h264_vaapi || true)"
+VP9="$(pick_enc libvpx-vp9 vp9_qsv vp9_vaapi || true)"
+AV1="$(pick_enc libaom-av1 libsvtav1 || true)"
+AAC="$(pick_enc aac libfdk_aac || true)"
+OPUS="$(pick_enc libopus opus || true)"
+
+# ---------------------------------------------------------------------------
+# 1) image  ->  image
+# ---------------------------------------------------------------------------
+if is_img_ext "$IN_EXT" && is_img_ext "$OUT_EXT" && [ "$in_is_gif" -eq 0 ]; then
+    [ -n "$IM" ] || { err "ImageMagick not found (install 'imagemagick')"; exit 1; }
+
+    if [ "$OUT_EXT" = "ico" ]; then
+        # ICO with a single, exact size (default 256 when no -c given)
+        SIZE_W="${WIDTH:-256}"; SIZE_H="${HEIGHT:-256}"
+        "$IM" "$INPUT[0]" -background none -resize "${SIZE_W}x${SIZE_H}!" \
+              -define icon:auto-resize= -strip "$OUTPUT" 2>/dev/null \
+        || "$IM" "$INPUT[0]" -background none -resize "${SIZE_W}x${SIZE_H}!" "$OUTPUT"
+        ok_msg "OK: $(pxd "$INPUT") -> ${SIZE_W}x${SIZE_H}  ($INPUT -> $OUTPUT)"
+        exit 0
+    fi
+
+    if [ -n "$WIDTH" ]; then
+        "$IM" "$INPUT[0]" -resize "${WIDTH}x${HEIGHT}!" -strip "$OUTPUT" 2>/dev/null \
+        || "$IM" "$INPUT[0]" -resize "${WIDTH}x${HEIGHT}!" "$OUTPUT"
+        ok_msg "OK: $(pxd "$INPUT") -> ${WIDTH}x${HEIGHT}  ($INPUT -> $OUTPUT)"
+    else
+        "$IM" "$INPUT[0]" -strip "$OUTPUT" 2>/dev/null || "$IM" "$INPUT[0]" "$OUTPUT"
+        ok_msg "OK: $(pxd "$INPUT") -> $OUT_EXT  ($INPUT -> $OUTPUT)"
+    fi
     exit 0
 fi
 
-if in_is_aud; then
-    ffmpeg -y -i "$INPUT" "$OUTPUT" 2>/dev/null
-    echo "OK: audio -> $OUTPUT"
+# ---------------------------------------------------------------------------
+# 2) gif  ->  image (first frame)  or  gif -> video
+# ---------------------------------------------------------------------------
+if [ "$in_is_gif" -eq 1 ] && is_img_ext "$OUT_EXT" && [ "$OUT_EXT" != "gif" ]; then
+    [ -n "$IM" ] || { err "ImageMagick not found (install 'imagemagick')"; exit 1; }
+    if [ -n "$WIDTH" ]; then
+        "$IM" "$INPUT[0]" -resize "${WIDTH}x${HEIGHT}!" -strip "$OUTPUT"
+    else
+        "$IM" "$INPUT[0]" -strip "$OUTPUT"
+    fi
+    ok_msg "OK: gif first frame $(pxd "$INPUT") -> $OUT_EXT  ($INPUT -> $OUTPUT)"
     exit 0
 fi
 
-# fallback
-ffmpeg -y -i "$INPUT" "$OUTPUT" 2>/dev/null || magick "$INPUT" "$OUTPUT" 2>/dev/null
-echo "OK: $INPUT -> $OUTPUT"
+# video codec args for the chosen container
+vid_args() {  # vid_args <container>
+    case "$1" in
+        mp4|m4v|mov)
+            [ -n "$H264" ] && printf '%s\n' -c:v "$H264" -crf 23
+            [ -n "$AAC"  ] && printf '%s\n' -c:a "$AAC"
+            printf '%s\n' -movflags +faststart -pix_fmt yuv420p ;;
+        mkv)
+            [ -n "$H264" ] && printf '%s\n' -c:v "$H264" -crf 23
+            [ -n "$AAC"  ] && printf '%s\n' -c:a "$AAC" ;;
+        webm)
+            [ -n "$VP9"  ] && printf '%s\n' -c:v "$VP9" -crf 32 -b:v 0
+            [ -n "$OPUS" ] && printf '%s\n' -c:a "$OPUS"
+            printf '%s\n' -pix_fmt yuv420p ;;
+        avi)
+            [ -n "$H264" ] && printf '%s\n' -c:v "$H264" -crf 23 ;;
+        *)  printf '%s\n' ;;
+    esac
+}
+
+if [ "$in_is_gif" -eq 1 ] && is_vid_ext "$OUT_EXT"; then
+    have ffmpeg || { err "ffmpeg not found (install 'ffmpeg')"; exit 1; }
+    VF=()
+    [ -n "$WIDTH" ] && VF=(-vf "scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2")
+    mapfile -t CA < <(vid_args "$OUT_EXT")
+    ffmpeg -hide_banner -loglevel error -y -i "$INPUT" ${VF[@]+"${VF[@]}"} \
+        ${CA[@]+"${CA[@]}"} "$OUTPUT" \
+        || { err "conversion failed ($INPUT -> $OUTPUT)"; exit 1; }
+    ok_msg "OK: gif -> $OUT_EXT  ($INPUT -> $OUTPUT)"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 3) video / audio / anything else -> ffmpeg
+# ---------------------------------------------------------------------------
+have ffmpeg || { err "ffmpeg not found (install 'ffmpeg')"; exit 1; }
+
+VF=()
+if [ -n "$WIDTH" ]; then
+    VF=(-vf "scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2")
+fi
+
+common_out() {
+    ffmpeg -hide_banner -loglevel error -y -i "$INPUT" ${VF[@]+"${VF[@]}"} "$@" "$OUTPUT"
+}
+
+mapfile -t CA < <(vid_args "$OUT_EXT")
+
+case "$OUT_EXT" in
+    gif)
+        # palette-based, high quality gif (scale baked into the filter chain)
+        P="$(mktemp -d)"; trap 'rm -rf "$P"' EXIT
+        SC="${WIDTH:-480}"
+        ffmpeg -hide_banner -loglevel error -y -i "$INPUT" \
+               -vf "fps=12,scale=${SC}:-1:flags=lanczos,palettegen" "$P/pal.png" \
+        && ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -i "$P/pal.png" \
+               -filter_complex "fps=12,scale=${SC}:-1:flags=lanczos[x];[x][1:v]paletteuse" "$OUTPUT" \
+        || { err "conversion failed ($INPUT -> $OUTPUT)"; exit 1; }
+        ok_msg "OK: $(pxd "$INPUT") -> gif  ($INPUT -> $OUTPUT)"
+        exit 0 ;;
+    png|jpg|jpeg|webp|bmp|tiff|tif)
+        # video -> still image
+        common_out -frames:v 1 || { err "conversion failed ($INPUT -> $OUTPUT)"; exit 1; }
+        ok_msg "OK: $(pxd "$INPUT") -> $OUT_EXT  ($INPUT -> $OUTPUT)"
+        exit 0 ;;
+    mp3|m4a|aac|opus|ogg|oga|flac|wav|wma|ac3|aiff)
+        ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -vn "$OUTPUT" \
+            || { err "conversion failed ($INPUT -> $OUTPUT)"; exit 1; }
+        ok_msg "OK: audio -> $OUT_EXT  ($INPUT -> $OUTPUT)"
+        exit 0 ;;
+    *)
+        # known container: use picked encoders; otherwise try copy then default
+        if [ "${#CA[@]}" -gt 0 ]; then
+            common_out ${CA[@]+"${CA[@]}"}
+        else
+            common_out -c copy 2>/dev/null || common_out
+        fi
+        RC=$?
+        [ $RC -eq 0 ] || { err "conversion failed ($INPUT -> $OUTPUT)"; exit 1; } ;;
+esac
+
+if [ -n "$WIDTH" ]; then
+    ok_msg "OK: $(pxd "$INPUT") -> ${WIDTH}x${HEIGHT}  ($INPUT -> $OUTPUT)"
+else
+    ok_msg "OK: $(pxd "$INPUT") -> ${OUT_EXT:-?}  ($INPUT -> $OUTPUT)"
+fi
 exit 0
